@@ -1,7 +1,9 @@
-all : 
-	@echo "Compile worker.cpp"
-	g++ worker.cpp -o test -lzmq -ldl
+all: worker master
 
-# all : 
-# 	@echo "Compile master.cpp"
-# 	g++ master.cpp -o example -lzmq -lpthread
+worker : worker.cpp
+	@echo "Compile worker.cpp"
+	g++ worker.cpp -o worker -lzmq -ldl -pthread
+
+master : master.cpp
+	@echo "Compile master.cpp"
+	g++ master.cpp -o master -lzmq -pthread

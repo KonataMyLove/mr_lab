@@ -41,7 +41,7 @@ MapFunc mapF;
 ReduceFunc reduceF;
 
 int map_task_num;
-int reduce_task_num = 2;
+int reduce_task_num;
 
 int MapId = 0;  // map worker的ID
 
@@ -117,9 +117,8 @@ void* mapWorker(void* arg) {  // void*定义的函数可以返回任意类型的
             return NULL;
         }
         string taskTmp = client.call<string>("assignTask").val();   //通过RPC返回值取得任务，在map中即为文件名
-        printf("map worker %d got task %s\n", mapTaskIdx, taskTmp.c_str());
-         
         if (taskTmp == "empty") continue;
+        printf("map worker %d got task %s\n", mapTaskIdx, taskTmp.c_str());
 
         // 3. 获取字符串内容
         KeyValue kv;
@@ -130,10 +129,8 @@ void* mapWorker(void* arg) {  // void*定义的函数可以返回任意类型的
         writeIntermFile(kvs, mapTaskIdx);
 
         // 5. 调用rpc通知master当前map已完成
-        printf("map worker %d finished task %s", mapTaskIdx, taskTmp.c_str());
-        if(client.call<bool>("setMapStat").val()) {
-
-        }
+        printf("map worker %d finished task %s\n", mapTaskIdx, taskTmp.c_str());
+        client.call<void>("setMapStat", taskTmp);
     }
 }
 
@@ -142,7 +139,7 @@ void removeFiles(){
     string path;
     for(int i = 0; i < map_task_num; i++){
         for(int j = 0; j < reduce_task_num; j++){
-            path = "mr-" + to_string(i) + "-" + to_string(j);
+            path = "../data/interm-" + to_string(i) + "-" + to_string(j);
             int ret = access(path.c_str(), F_OK);
             if(ret == 0) remove(path.c_str());
         }
@@ -153,7 +150,7 @@ void removeFiles(){
 void removeOutputFiles(){
     string path;
     for(int i = 0; i < MAX_REDUCE_NUM; i++){
-        path = "mr-out-" + to_string(i);
+        path = "../data/mr-out-" + to_string(i);
         int ret = access(path.c_str(), F_OK);
         if(ret == 0) remove(path.c_str());
     }
@@ -202,26 +199,29 @@ int main() {
     work_client.set_timeout(5000);
 
     // ----- 测试程序 ------
-    KeyValue kv;
-    getcontent("being_ernest", kv);
-    vector<KeyValue> kvs = mapF(kv);
-    writeIntermFile(kvs, 0);
+    // KeyValue kv;
+    // getcontent("being_ernest", kv);
+    // vector<KeyValue> kvs = mapF(kv);
+    // writeIntermFile(kvs, 0);
     // ----- 测试程序 ------
 
-    // map_task_num = work_client.call<int>("getMapNum").val();
-    // reduce_task_num = work_client.call<int>("getReduceNum").val();
-    // cout << "Done!" << endl;
+    map_task_num = work_client.call<int>("getMapNum").val();
+    reduce_task_num = work_client.call<int>("getReduceNum").val();
 
-    // // TODO：删除上次写入的文件
-    // removeFiles();
-    // removeOutputFiles();
+    // TODO：删除上次写入的文件
+    removeFiles();
+    removeOutputFiles();
 
-    // //创建多个map及reduce的worker线程
-    // pthread_t tidMap[map_task_num];       // pthread_t为unsigned long int，用于定义线程编号
-    // pthread_t tidReduce[reduce_task_num];
-    // for (int i = 0; i < map_task_num; i++) {
-    //     pthread_create(&tidMap[i], NULL, mapWorker, NULL);  // 创建线程，赋予线程ID以及线程对应的函数
-    //     pthread_detach(tidMap[i]);                          // 使进程在结束后主动释放资源，与主控进程断开关系
-    // }
+    //创建多个map及reduce的worker线程
+    pthread_t tidMap[map_task_num];       // pthread_t为unsigned long int，用于定义线程编号
+    pthread_t tidReduce[reduce_task_num];
+    for (int i = 0; i < map_task_num; i++) {
+        pthread_create(&tidMap[i], NULL, mapWorker, NULL);  // 创建线程，赋予线程ID以及线程对应的函数
+        pthread_detach(tidMap[i]);                          // 使进程在结束后主动释放资源，与主控进程断开关系
+    }
+    pthread_mutex_lock(&map_mutex);
+    pthread_cond_wait(&cond, &map_mutex);
+    // 调用pthread_cond_wait时，当前线程会释放互斥锁；而当pthread_cond_wait被pthread_cond_broadcast唤醒后会再次获取互斥锁
+    pthread_mutex_unlock(&map_mutex);
     return 0;
 }
