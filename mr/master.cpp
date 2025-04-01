@@ -17,32 +17,44 @@ public:
     static void* waitTime(void* arg);
     Master(int mapNum = 2, int reduceNum = 2);  // 构造函数，带缺省值
     void GetAllFile(char* file[], int index);   // 将所有任务加入map任务工作队列
-    int getMapNum() { return m_mapNum; }        // getter方法，可以访问类private属性
-    int getReduceNum() { return m_reduceNum; }
+    int getMapNum() { return m_mapNum; }        // 获取map worker数量，RPC
+    // getter方法，可以访问类private属性     
+    int getReduceNum() { return m_reduceNum; }  // 获取reduce worker数量，RPC
 
     void waitMap(string filename);
 
     string assignTask();                        // 分配map任务的函数，RPC
-    void setMapStat(string taskTmp);            // 设定map完成状态
+    int assignReduceTask();                     // 分配reduce任务的函数，RPC
+    void setMapStat(string taskTmp);            // 设定map完成状态，RPC
     bool isMapDone();                           // 检查所有的map任务是否已经完成，RPC
+    bool isReduceDone();                        // 检查所有的reduce任务是否已经完成，RPC
 
 private:
     list<char *> m_list;                        // map任务工作队列，是一个链表
+    list<int> r_list;                           // reduce任务工作队列
     int fileNum;                                // 命令行读到的文件总数
     int m_mapNum;
     int m_reduceNum;
     locker m_assign_lock;                       // 共享数据保护锁，一个重新封装的类
     unordered_map<string, int> finishedMapTask; // 存放所有完成的map任务对应的文件名
+    unordered_map<int, int> finishedReduceTask;
     vector<string> runningMapWork;              // 正在处理的map任务，分配出去就加到这个队列，用于判断超时处理重发
+    vector<int> runningReduceWork;
 };
 
 Master::Master(int mapNum, int reduceNum): m_mapNum(mapNum), m_reduceNum(reduceNum) {  // 构造函数，实例化类对象时调用一次，可以用来初始化
     m_list.clear();
+    r_list.clear();
     finishedMapTask.clear();
+    finishedReduceTask.clear();
     runningMapWork.clear();
+    runningReduceWork.clear();
     if (m_mapNum <= 0 || m_reduceNum <= 0) {
         throw std::exception();
-    } 
+    }
+    for (int i = 0; i < m_reduceNum; i++) {
+        r_list.emplace_back(i);
+    }
     cout << "master successfully created and initialized" << endl;
 }
 
@@ -77,8 +89,8 @@ void Master::waitMap(string filename){
 
 // map的worker只需要拿到对应的文件名就可以进行map
 string Master::assignTask() {
-    if(isMapDone()) return "empty";
-    if(!m_list.empty()){
+    if (isMapDone()) return "empty";
+    if (!m_list.empty()) {
         m_assign_lock.lock();
         char* task = m_list.back(); // 从工作队列取出一个待map的文件名
         m_list.pop_back();            
@@ -88,6 +100,19 @@ string Master::assignTask() {
     }
     //m_hashSet.erase(task);
     return "empty";
+}
+
+// reduce任务分配
+int Master::assignReduceTask() {
+    if (isReduceDone()) return -1;
+    if (!r_list.empty()) {
+        m_assign_lock.lock();
+        int task = r_list.back();
+        r_list.pop_back();
+        m_assign_lock.unlock();
+        return task;
+    }
+    return -1;
 }
 
 // map任务完成
@@ -100,7 +125,7 @@ void Master::setMapStat(string taskTmp) {
 // 检测map任务是否已全部完成
 bool Master::isMapDone() {
     m_assign_lock.lock();
-    if(finishedMapTask.size() != fileNum){  //当统计map任务的hashmap大小达到文件数，map任务结束
+    if (finishedMapTask.size() != fileNum) {  //当统计map任务的hashmap大小达到文件数，map任务结束
         m_assign_lock.unlock();
         return false;
     }
@@ -108,6 +133,16 @@ bool Master::isMapDone() {
     return true;
 }
 
+// 检测reduce任务是否已全部完成
+bool Master::isReduceDone() {
+    m_assign_lock.lock();
+    if (finishedReduceTask.size() != m_reduceNum) {
+        m_assign_lock.unlock();
+        return false;
+    }
+    m_assign_lock.unlock();
+    return true;
+}
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {

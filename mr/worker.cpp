@@ -44,7 +44,9 @@ int map_task_num;
 int reduce_task_num;
 
 int MapId = 0;  // map worker的ID
+int ReduceId = 0;
 
+// 利用基于ASCII编码的哈希规则确保不同的reduce worker不会处理相同的单词
 int ihash(string strs) {
     int sum = 0;
     for (int i = 0; i < strs.size(); i++) {
@@ -98,6 +100,11 @@ void writeIntermFile(vector<KeyValue> kvs, int mapTaskIdx) {
     }
 }
 
+
+void getReduceStr(int reduceTaskIdx, vector<KeyValue>& kvs) {
+    
+}
+
 // mapworker
 void* mapWorker(void* arg) {  // void*定义的函数可以返回任意类型的指针
     // 1. map worker进程初始化
@@ -131,6 +138,35 @@ void* mapWorker(void* arg) {  // void*定义的函数可以返回任意类型的
         // 5. 调用rpc通知master当前map已完成
         printf("map worker %d finished task %s\n", mapTaskIdx, taskTmp.c_str());
         client.call<void>("setMapStat", taskTmp);
+    }
+}
+
+// reduceworker
+void* reduceWorker(void* arg) {
+    // 1. reduce worker进程初始化
+    buttonrpc client;
+    client.as_client("127.0.0.1", 5555);
+    pthread_mutex_lock(&map_mutex);
+    int reduceTaskIdx = ReduceId++;
+    pthread_mutex_unlock(&map_mutex);
+    bool ret = false;
+
+    while(1) {
+        // 2. 通过master获取任务
+        ret = client.call<bool>("isReduceDone").val();
+        if (ret) {
+            pthread_cond_broadcast(&cond);
+            return NULL;
+        }
+        int taskTmp = client.call<int>("assignReduceTask").val();
+        if (taskTmp == -1) continue;
+        printf("reduce worker %d got reduce task %d\n", reduceTaskIdx, taskTmp);
+
+        // 3. 获取reduce worker对应的字符串内容并存入kvs
+        // 存入的二元组为<"modality", "111">
+        vector<KeyValue> kvs;
+        getReduceStr(reduceTaskIdx, kvs);
+
     }
 }
 
@@ -222,6 +258,13 @@ int main() {
     pthread_mutex_lock(&map_mutex);
     pthread_cond_wait(&cond, &map_mutex);
     // 调用pthread_cond_wait时，当前线程会释放互斥锁；而当pthread_cond_wait被pthread_cond_broadcast唤醒后会再次获取互斥锁
+    pthread_mutex_unlock(&map_mutex);
+    for (int i = 0; i < reduce_task_num; i++) {
+        pthread_create(&tidReduce[i], NULL, reduceWorker, NULL);
+        pthread_detach(tidReduce[i]);
+    }
+    pthread_mutex_lock(&map_mutex);
+    pthread_cond_wait(&cond, &map_mutex);
     pthread_mutex_unlock(&map_mutex);
     return 0;
 }
