@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # echo "Starting server..."
-# ./master being_ernest dorian_gray &
+./master being_ernest dorian_gray &
 
 sleep 1
 

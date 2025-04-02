@@ -26,12 +26,13 @@ public:
     string assignTask();                        // 分配map任务的函数，RPC
     int assignReduceTask();                     // 分配reduce任务的函数，RPC
     void setMapStat(string taskTmp);            // 设定map完成状态，RPC
+    void setReduceStat(int reduceTaskIdx);      // 设定reduce完成状态，RPC
     bool isMapDone();                           // 检查所有的map任务是否已经完成，RPC
     bool isReduceDone();                        // 检查所有的reduce任务是否已经完成，RPC
 
 private:
     list<char *> m_list;                        // map任务工作队列，是一个链表
-    list<int> r_list;                           // reduce任务工作队列
+    vector<int> r_list;                         // reduce任务工作队列
     int fileNum;                                // 命令行读到的文件总数
     int m_mapNum;
     int m_reduceNum;
@@ -44,7 +45,7 @@ private:
 
 Master::Master(int mapNum, int reduceNum): m_mapNum(mapNum), m_reduceNum(reduceNum) {  // 构造函数，实例化类对象时调用一次，可以用来初始化
     m_list.clear();
-    r_list.clear();
+    // r_list.clear();
     finishedMapTask.clear();
     finishedReduceTask.clear();
     runningMapWork.clear();
@@ -122,6 +123,13 @@ void Master::setMapStat(string taskTmp) {
     m_assign_lock.unlock();
 }
 
+// reduce任务完成
+void Master::setReduceStat(int reduceTaskIdx) {
+    m_assign_lock.lock();
+    finishedReduceTask.emplace(reduceTaskIdx, 1);
+    m_assign_lock.unlock();
+}
+
 // 检测map任务是否已全部完成
 bool Master::isMapDone() {
     m_assign_lock.lock();
@@ -156,7 +164,9 @@ int main(int argc, char* argv[]) {
     master.GetAllFile(argv, argc);
     server.bind("isMapDone", &Master::isMapDone, &master);
     server.bind("assignTask", &Master::assignTask, &master);
+    server.bind("assignReduceTask", &Master::assignReduceTask, &master);
     server.bind("setMapStat", &Master::setMapStat, &master);
+    server.bind("setReduceStat", &Master::setReduceStat, &master);
     server.bind("getMapNum", &Master::getMapNum, &master);
     server.bind("getReduceNum", &Master::getReduceNum, &master);
     server.run();

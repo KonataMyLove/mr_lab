@@ -55,23 +55,44 @@ int ihash(string strs) {
     return sum % reduce_task_num;
 }
 
+// 字符串分割函数
+vector<string> split(string text, char op){
+    int n = text.size();
+    vector<string> str;
+    string tmp = "";
+    for(int i = 0; i < n; i++){
+        if(text[i] != op){
+            tmp += text[i];
+        }else{
+            if(tmp.size() != 0) str.push_back(tmp);
+            tmp = "";
+        }
+    }
+    return str;
+}
+
+string split(const string& str) {
+    size_t pos = str.find(',');
+    return str.substr(0, pos);
+}
+
 // 根据任务名获取文件内容
-void getcontent(string task, KeyValue& kv) {
-    ifstream fin;
-    string path = "../data/pg-" + task + ".txt";
-    fin.open(path, ios::in);
-    if (!fin) {
-        cerr << "Cannot open file" << task << endl;
+void getContent(const char* file, KeyValue& kv) {
+    int fd = open(file, O_RDONLY);  // open函数返回一个文件描述符
+    int length = lseek(fd, 0, SEEK_END);  // lseek是linux文件编程函数，可以将文件指针移到指定的位置
+
+    lseek(fd, 0, SEEK_SET);
+    char buf[length];
+    bzero(buf, length);  // 令字符串前length个元素为0
+    int len = read(fd, buf, length);
+    if (len != length) {
+        perror("read");
         exit(-1);
     }
-    string content;
-    char c;
-    while ((c = fin.get()) != EOF) {
-        content += c;
-    }
-    kv.key = task;
-    kv.value = content;
-    fin.close();
+    kv.key = split(string(file), '/').back();
+    kv.value = string(buf);
+
+    close(fd);
 }
 
 void writekv(int fd, KeyValue kv) {
@@ -102,7 +123,48 @@ void writeIntermFile(vector<KeyValue> kvs, int mapTaskIdx) {
 
 
 void getReduceStr(int reduceTaskIdx, vector<KeyValue>& kvs) {
-    
+    vector<string> files;
+    // ------debug用------
+    // ReduceId = 1;
+    // ------debug用------
+    for (int i = 0; i < ReduceId; i++) {
+        string path = "../data/interm-" + to_string(i) + '-' + to_string(reduceTaskIdx);
+        int ret = access(path.c_str(), F_OK);
+        if (ret == -1) continue;
+        files.push_back(path);
+    }
+    unordered_map<string, string> wordCount;
+    vector<string> strs;
+    strs.clear();
+    for (auto& file: files) {
+        KeyValue tmp;
+        getContent(file.c_str(), tmp);
+        // 分割文本字符串，元素形式为"content, 1"
+        vector<string> retStr = split(tmp.value, ' ');
+        strs.insert(strs.end(), retStr.begin(), retStr.end());
+    }
+    for (const auto& str: strs) {
+        wordCount[split(str)] += '1';
+    }
+    for (const auto& pair: wordCount) {
+        if (pair.first.length() == 0) continue;
+        KeyValue insertPair;
+        insertPair.key = pair.first;
+        insertPair.value = pair.second;
+        kvs.push_back(insertPair);
+    }
+    sort(kvs.begin(), kvs.end(), [] (KeyValue& kv1, KeyValue& kv2) {
+        return kv1.key < kv2.key;
+    });
+}
+
+void reduceWrite(int fd, string str) {
+    str += "\n";
+    int len = write(fd, str.c_str(), str.size());
+    if (len == -1) {
+        perror("Reduce write: ");
+        exit(-1);
+    }
 }
 
 // mapworker
@@ -129,7 +191,8 @@ void* mapWorker(void* arg) {  // void*定义的函数可以返回任意类型的
 
         // 3. 获取字符串内容
         KeyValue kv;
-        getcontent(taskTmp, kv);
+        string path = "../data/pg-" + taskTmp + ".txt";
+        getContent(path.c_str(), kv);
 
         // 4. map运算进行，写入磁盘
         vector<KeyValue> kvs = mapF(kv);
@@ -165,7 +228,25 @@ void* reduceWorker(void* arg) {
         // 3. 获取reduce worker对应的字符串内容并存入kvs
         // 存入的二元组为<"modality", "111">
         vector<KeyValue> kvs;
-        getReduceStr(reduceTaskIdx, kvs);
+        getReduceStr(taskTmp, kvs);
+
+        // 4. reduce过程，返回的ret记录了每个单词的出现次数，写入磁盘
+        vector<string> ret = reduceF(kvs, taskTmp);
+        vector<string> res;
+        for (int i = 0; i < ret.size(); i++) {
+            res.push_back(kvs[i].key + " " + ret[i]);
+        }
+        string path = "../data/mr-out-" + to_string(taskTmp);
+        int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0664);
+        
+        for (const auto& str: res) {
+            reduceWrite(fd, str);
+        }
+        close(fd);
+
+        // 5. 调用rpc通知master当前reduce已完成
+        printf("reduce worker %d finished task %d\n", reduceTaskIdx, taskTmp);
+        client.call<void>("setReduceStat", taskTmp);
 
     }
 }
@@ -239,6 +320,21 @@ int main() {
     // getcontent("being_ernest", kv);
     // vector<KeyValue> kvs = mapF(kv);
     // writeIntermFile(kvs, 0);
+    // vector<KeyValue> kvs;
+    // getReduceStr(0, kvs);
+    // vector<string> ret = reduceF(kvs, 0);
+    // vector<string> res;
+    // for (int i = 0; i < ret.size(); i++) {
+    //     res.push_back(kvs[i].key + " " + ret[i]);
+    // }
+    // cout << res[0] << endl;
+    // string path = "../data/mr-out-" + to_string(0);
+    // int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0664);
+    
+    // for (const auto& str: res) {
+    //     reduceWrite(fd, str);
+    // }
+    // close(fd);
     // ----- 测试程序 ------
 
     map_task_num = work_client.call<int>("getMapNum").val();
