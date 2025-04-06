@@ -221,6 +221,10 @@ void* reduceWorker(void* arg) {
             pthread_cond_broadcast(&cond);
             return NULL;
         }
+        // ret = client.call<bool>("Done").val();
+        // if (ret) {
+        //     return NULL;
+        // }
         int taskTmp = client.call<int>("assignReduceTask").val();
         if (taskTmp == -1) continue;
         printf("reduce worker %d got reduce task %d\n", reduceTaskIdx, taskTmp);
@@ -362,5 +366,10 @@ int main() {
     pthread_mutex_lock(&map_mutex);
     pthread_cond_wait(&cond, &map_mutex);
     pthread_mutex_unlock(&map_mutex);
-    return 0;
+
+    removeFiles();
+    dlclose(handle);
+    pthread_mutex_destroy(&map_mutex);
+    pthread_cond_destroy(&cond);
+
 }

@@ -29,6 +29,7 @@ public:
     void setReduceStat(int reduceTaskIdx);      // 设定reduce完成状态，RPC
     bool isMapDone();                           // 检查所有的map任务是否已经完成，RPC
     bool isReduceDone();                        // 检查所有的reduce任务是否已经完成，RPC
+    bool Done();
 
 private:
     list<char *> m_list;                        // map任务工作队列，是一个链表
@@ -152,6 +153,13 @@ bool Master::isReduceDone() {
     return true;
 }
 
+bool Master::Done(){
+    m_assign_lock.lock();
+    int len = finishedReduceTask.size(); //reduce的hashmap若是达到reduceNum，reduce任务及总任务完成
+    m_assign_lock.unlock();
+    return len == m_reduceNum;
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         cout << "Missing args! Format should be ./Master pg*.txt" << endl;
@@ -159,10 +167,12 @@ int main(int argc, char* argv[]) {
     }
     buttonrpc server;
     server.as_server(5555);
-    Master master(2, 2);    // 优先级似乎在析构函数之上
-    
+    Master master(2, 3);    // 优先级似乎在析构函数之上
+
     master.GetAllFile(argv, argc);
     server.bind("isMapDone", &Master::isMapDone, &master);
+    server.bind("isReduceDone", &Master::isReduceDone, &master);
+    server.bind("Done", &Master::Done, &master);
     server.bind("assignTask", &Master::assignTask, &master);
     server.bind("assignReduceTask", &Master::assignReduceTask, &master);
     server.bind("setMapStat", &Master::setMapStat, &master);
